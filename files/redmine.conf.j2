@@ -1,0 +1,19 @@
+NameVirtualHost *:80
+
+<VirtualHost *:80>
+        <IfModule mod_fcgid.c>
+                FcgidBusyTimeout 3600
+        </IfModule>
+        SetEnv GEM_HOME /root/.gem/ruby/{{ ruby_version }}/gems
+        ServerName localhost
+        ServerAlias *
+        DocumentRoot {{ holder }}/redmine-{{version}}/public/
+        ErrorLog logs/redmine_error_log
+        <Directory "{{ holder }}/redmine-{{version}}/public/">
+                Options Indexes ExecCGI FollowSymLinks
+                Order allow,deny
+                Allow from all
+                AllowOverride all
+                Options -MultiViews
+        </Directory>
+</VirtualHost>

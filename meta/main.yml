@@ -8,4 +8,6 @@ galaxy_info:
     - name: EL
       versions:
         - 7
-dependencies: [Nainterceptor.common]
+dependencies:
+  - { role: rvm_io.rvm1-ruby, tags: ruby }
+  - { role: Nainterceptor.common }

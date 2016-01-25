@@ -1,2 +1,148 @@
 ---
 # tasks file for Nainterceptor.redmine
+- name: "Install required packages"
+  yum: name={{ item }} state=present
+  with_items:
+    - gcc
+    - gcc-c++
+    - make
+    - libxml2-devel
+    - mysql-devel
+    - git
+    - ImageMagick-devel
+    - ImageMagick
+    - zlib-devel
+    - curl-devel
+    - openssl-devel
+    - apr-devel
+    - apr-util-devel
+    - libxslt-devel
+    - httpd-devel
+    - mod_fcgid
+    - epel-release
+    - fcgi-devel
+    - fcgi
+
+- name: "Configure bashrc"
+  template:
+    src: ../files/.bashrc.j2
+    dest: "/root/.bashrc"
+
+- name: "Install required gem"
+  gem: name={{ item }} state=present
+  with_items:
+    - mysql2
+    - bundler
+    - rmagick
+    - fcgi
+    - passenger
+
+- name: "Download Redmine"
+  get_url: >
+    url=http://www.redmine.org/releases/redmine-{{ redmine_version }}.zip
+    dest=/tmp/redmine-{{ redmine_version }}.zip
+
+- name: "Prepare - create Path"
+  file:
+    dest: "{{ holder }}"
+    state: directory
+    group: apache
+    owner: apache
+    recurse: yes
+
+- name: "Unzip redmine"
+  unarchive:
+    src: "/tmp/redmine-{{ redmine_version }}.zip"
+    dest: "{{ holder }}"
+    group: apache
+    owner: apache
+    copy: no
+    creates: "{{ holder }}/redmine-{{ redmine_version }}"
+
+- name: "Copy dispatch fcgi"
+  shell: "cp dispatch.fcgi.example dispatch.fcgi"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}/public"
+    creates: "{{ holder }}/redmine-{{redmine_version}}/public/dispatch.fcgi"
+  become: yes
+  become_user: apache
+
+- name: "Copy .htaccess"
+  shell: "cp htaccess.fcgi.example .htaccess"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}/public"
+    creates: "{{ holder }}/redmine-{{redmine_version}}/public/.htaccess"
+  become: yes
+  become_user: apache
+
+- name: "Configure database"
+  template:
+    src: "../files/database.yml.j2"
+    dest: "{{ holder }}/redmine-{{redmine_version}}/config/database.yml"
+
+- name: "Bundle config"
+  shell: "bundle config build.nokogiri --use-system-libraries"
+  args:
+    creates: "{{ holder }}/redmine-{{redmine_version}}/Gemfile.lock"
+
+- name: "Bundle install"
+  shell: "bundle install --without development test"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}"
+    creates: "{{ holder }}/redmine-{{redmine_version}}/Gemfile.lock"
+  register: install
+
+- name: "Generate secret"
+  shell: "bundle exec rake generate_secret_token"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}"
+  when: install.changed
+
+- name: "Generate DB"
+  shell: "RAILS_ENV=production bundle exec rake db:migrate"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}"
+  when: install.changed
+
+- name: "Generate DB dataset"
+  shell: "RAILS_ENV=production REDMINE_LANG=en bundle exec rake redmine:load_default_data"
+  args:
+    chdir: "{{ holder }}/redmine-{{redmine_version}}"
+  when: install.changed
+
+- name: "Install Passenger Apache2"
+  shell: "passenger-install-apache2-module -a --languages ruby"
+  args:
+    creates: "/root/.gem/ruby/gems/{{ ruby_version }}/passenger-{{passenger_version}}/buildout/apache2/mod_passenger.so"
+
+- name: "Remove welcome config file"
+  file: dest=/etc/httpd/conf.d/welcome.conf state=absent
+
+- name: "Configure Apache2"
+  template:
+    src: "../files/{{ item }}.j2"
+    dest: "/etc/httpd/conf.d/{{ item }}"
+  with_items:
+    - passenger.conf
+    - redmine.conf
+  register: passenger_configuration
+
+- name: "Make root directory executable"
+  file:
+    path: "/root"
+    mode: o+x
+  register: executable_tree
+
+- name: "Make gem directory tree executable"
+  file:
+    path: "/root/.gem"
+    mode: o+rx
+    recurse: yes
+  when: executable_tree.changed
+
+- name: "Reload httpd"
+  service:
+    name: httpd
+    state: restarted
+    enabled: yes
+  when: passenger_configuration.changed
